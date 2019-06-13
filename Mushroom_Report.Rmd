@@ -1,0 +1,314 @@
+---
+title: "Is this mushroom edible ?"
+author: "Jean-Francois Barthe"
+date: "11/06/2019"
+output:
+  pdf_document: 
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dslabs)
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(plyr)
+library(rpart)
+library(rpart.plot)
+library(knitr)
+library(kableExtra)
+```
+
+\  
+\  
+\ 
+
+---
+
+\  
+\  
+\  
+
+# EXECUTIVE SUMMARY
+
+The mushroom database contains about 8.200 types of mushrooms from the most widely consumed family (*Agaricus*), either edible or poisonous. The database gives 22 attributes for each mushroom (cap shape, cap color, veil type, spore print color, habitat, ...). I will try different model to predict whether the mushroom is edible or not, according to the attributes. The first objective is to attain a 100% specificity (positive = poisonous, we don't want false edible !) and if possible a 100% accuracy. The second objective is to find a simple model, that is using a small number of attributes.
+
+**Almost all models achieved perfect accuracy** : logistic regression, k-nearest neighbors and decision tree with a penaly matrix to minimize false edible.
+
+The decision tree shows that **5 attributes among the 22 are enough to get a perfect prediction** : odor, spore.print.color, population, gill.size and habitat
+
+If a mushroom smells fishy, spicy, pungent, musty, foul or creosote, DO NOT EAT IT ! If it doesn't, but the color of its spore print is green or white, do not eat it either.
+
+\newpage
+
+# ANALYSIS
+
+## Getting and tidying the data
+
+The mushroom dataset can be found on the [Kaggle website](https://www.kaggle.com/uciml/mushroom-classification/downloads/mushroom-classification.zip)
+
+I couldn't find an easy way to download the dataset directly from the script (restrictions due to Kaggle Terms of Use), so the csv file provided with the script must be copied in the script directory.
+
+\  
+```{r read data file}
+raw <- read.csv("./mushrooms.csv")
+str(raw)
+```
+
+\  
+
+The dataset is already tidy. The only modification I made for clarity purpose is to use full name instead of one letter for the levels of each factor.
+
+For instance, the code for *cap.shape* is :
+
+```{r factor levers renaming example, warning = FALSE}
+raw$cap.shape <- mapvalues(raw$cap.shape, from = c("b", "c", "x", "f", "k", "s"), 
+                           to = c("bell", "conical", "convex", "flat", "knobbed", "sunken"))
+```
+
+
+```{r factor levels renaming, include = FALSE, warning = FALSE}
+raw$class <- mapvalues(raw$class, from = c("e", "p"), 
+                       to = c("edible", "poisonous"))
+raw$cap.surface <- mapvalues(raw$cap.surface, from = c("f", "g", "y", "s"), 
+                             to = c("fibrous", "grooves", "scaly", "smooth"))
+raw$cap.color <- mapvalues(raw$cap.color, from = c("n", "b", "c", "g", "r", "p", "u", "e", "w", "y"), 
+                           to = c("brown", "buff", "cinnamon", "grey", "green", "pink", "purple", "red", "white", "yellow"))
+raw$bruises <- mapvalues(raw$bruises, from = c("t", "f"), 
+                         to = c("bruises", "no"))
+raw$odor <- mapvalues(raw$odor, from = c("a", "l", "c", "y", "f", "m", "n", "p", "s"), 
+                      to = c("almond", "anise", "creosote", "fishy", "foul", "musty", "none", "pungent", "spicy"))
+raw$gill.attachment <- mapvalues(raw$gill.attachment, from = c("a", "d", "f", "n"), 
+                                 to = c("attached", "descending", "free", "notched"))
+raw$gill.spacing <- mapvalues(raw$gill.spacing, from = c("c", "w", "d"), 
+                              to = c("close", "crowded", "distant"))
+raw$gill.size <- mapvalues(raw$gill.size, from = c("b", "n"), 
+                           to = c("broad", "narrow"))
+raw$gill.color <- mapvalues(raw$gill.color, from = c("k", "n", "b", "h", "g", "r", "o", "p", "u", "e", "w", "y"), 
+                           to = c("black", "brown", "buff", "chocolate", "grey", "green", "orange", "pink", "purple", "red", "white", "yellow"))
+raw$stalk.shape <- mapvalues(raw$stalk.shape, from = c("e", "t"), 
+                             to = c("enlarging", "tapering"))
+raw$stalk.root <- mapvalues(raw$stalk.root, from = c("b", "c", "u", "e", "z", "r", "?"), 
+                            to = c("bulbous", "club", "cup", "equal", "rhizomorphs", "rooted", "missing"))
+raw$stalk.surface.above.ring <- mapvalues(raw$stalk.surface.above.ring, from = c("f", "y", "k", "s"), 
+                                          to = c("fibrous", "scaly", "silky", "smooth"))
+raw$stalk.surface.below.ring <- mapvalues(raw$stalk.surface.below.ring, from = c("f", "y", "k", "s"), 
+                                          to = c("fibrous", "scaly", "silky", "smooth"))
+raw$stalk.color.above.ring <- mapvalues(raw$stalk.color.above.ring, from = c("n", "b", "c", "g", "o", "p", "e", "w", "y"), 
+                           to = c("brown", "buff", "cinnamon", "grey", "orange", "pink", "red", "white", "yellow"))
+raw$stalk.color.below.ring <- mapvalues(raw$stalk.color.below.ring, from = c("n", "b", "c", "g", "o", "p", "e", "w", "y"), 
+                                        to = c("brown", "buff", "cinnamon", "grey", "orange", "pink", "red", "white", "yellow"))
+raw$veil.type <- mapvalues(raw$veil.type, from = c("p", "u"), 
+                           to = c("partial", "universal"))
+raw$veil.color <- mapvalues(raw$veil.color, from = c("b", "o", "w", "y"), 
+                            to = c("brown", "orange", "white", "yellow"))
+raw$ring.number <- mapvalues(raw$ring.number, from = c("n", "o", "t"), 
+                             to = c("none", "one", "two"))
+raw$ring.type <- mapvalues(raw$ring.type, from = c("c", "e", "f", "l", "n", "p", "s", "z"), 
+                      to = c("cobwebby", "evanescent", "flaring", "large", "none", "pendant", "sheating", "zone"))
+raw$spore.print.color <- mapvalues(raw$spore.print.color, from = c("k", "n", "b", "h", "r", "o", "u", "w", "y"), 
+                            to = c("black", "brown", "buff", "chocolate", "green", "orange", "purple", "white", "yellow"))
+raw$population <- mapvalues(raw$population, from = c("a", "c", "n", "s", "v", "y"),
+                            to = c("abundant", "clustered", "numerous", "scattered", "several", "solitary"))
+raw$habitat <- mapvalues(raw$habitat, from = c("g", "l", "m", "p", "u", "w", "d"), 
+                            to = c("grasses", "leaves", "meadows", "paths", "urban", "waste", "woods"))
+```
+\newpage
+## Data Exploration
+
+Let's have a look at the summary of the dataframe : 
+```{r summary}
+summary(raw)
+```
+\  
+
+The observations are almost evenly balanced between edible and poisonous mushrooms. The attributes distributions range from the very rare (e.g. *cap.shape* conical = 4 observations) to the most common (*gill.attachment* free = 7924 observations). All observations share the attribute *veil.type* = partial. Therefore, this factor is not relevant for the model and can be discarded.
+
+```{r veil.type}
+mushrooms <- select(raw, -veil.type)
+rm(raw)
+```
+\  
+
+The dataset being quite large, we will train our model on 60% of the observations and keep 40 % as a test set.
+```{r splitting data}
+set.seed(1)
+index <- createDataPartition(mushrooms$class, times = 1, p = 0.4, list = FALSE)
+test_set <- mushrooms[index, ]
+train_set <- mushrooms[-index, ]
+y <- test_set$class
+```
+\  
+\  
+
+## Logistic Regression
+
+The first model we try is a logistic regression with 22 predictors (all attributes but class)
+
+```{r logistic regression, warning = FALSE}
+glm_train <- glm(class ~ ., data = train_set, family = "binomial", maxit = 100)
+y_hat_glm <- predict(glm_train, newdata = test_set, type = "response")
+y_hat_glm <- as.factor(ifelse(y_hat_glm > 0.5, "poisonous", "edible"))
+
+cfm <- confusionMatrix(y_hat_glm, y)
+results <- tibble(method = "Logistic regression", 
+                  Specificity = cfm$byClass[["Specificity"]], 
+                  Sensitivity = cfm$byClass[["Sensitivity"]], 
+                  Accuracy = cfm$overall[["Accuracy"]])
+
+kable(table(y, y_hat_glm), caption = "Logistic regression", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "y_hat" = 2))
+```
+The logistic regression model gives a perfect prediction on the test set.
+
+\newpage
+
+## K-nearest neighbors
+
+Let's try a kNN model with k values between 3 and 11 :
+```{r knn train, warning = FALSE}
+knn_train <- train(class ~ ., method = "knn", 
+                      data = train_set,
+                      tuneGrid = data.frame(k = seq(3, 11, 2)))
+ggplot(knn_train, highlight = TRUE) + scale_x_continuous(breaks = c(3,7,11))
+```
+The best accuracy is achieved with k = 3.
+
+```{r knn}
+y_hat_knn <- predict(knn_train, newdata = test_set, type = "raw")
+
+kable(table(y, y_hat_knn), caption = "3-nearest neighbors", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "y_hat" = 2))
+```
+
+```{r knn results, include = FALSE}
+cfm <- confusionMatrix(y_hat_knn, y)
+results <- bind_rows(results, tibble(method = "3-nearest neighbors", 
+                  Specificity = cfm$byClass[["Specificity"]], 
+                  Sensitivity = cfm$byClass[["Sensitivity"]], 
+                  Accuracy = cfm$overall[["Accuracy"]]))
+```
+
+The 3-nearest neighbors model also gives a perfect prediction on the test set.
+
+\newpage
+
+## Decision Tree
+
+```{r Decision Tree 1}
+rpart_train <- rpart(class ~ ., data = train_set, method = "class")
+y_hat_rpart <- predict(rpart_train, newdata = test_set, type="class")
+
+kable(table(y, y_hat_rpart), caption = "Decision tree", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "y_hat" = 2))
+```
+
+```{r Decision Tree 1 results, include = FALSE}
+cfm <- confusionMatrix(y_hat_rpart, y)
+results <- bind_rows(results, tibble(method = "Decision tree", 
+                                     Specificity = cfm$byClass[["Specificity"]], 
+                                     Sensitivity = cfm$byClass[["Sensitivity"]], 
+                                     Accuracy = cfm$overall[["Accuracy"]]))
+```
+
+13 mushrooms are predicted edible when they are indeed poisonous : NOT GOOD !!
+
+In order to minimize false negatives (false edibles), let's add a penalty matrix :
+```{r Decision Tree 2}
+penalty.matrix <- matrix(c(0,10,1,0), nrow = 2, ncol = 2)
+rpart2_train <- rpart(class ~ ., data = train_set, method = "class", parms = list(loss = penalty.matrix))
+y_hat_rpart2 <- predict(rpart2_train, newdata = test_set, type="class")
+
+kable(table(y, y_hat_rpart2), caption = "Decision tree with penalty", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "y_hat" = 2))
+```
+
+```{r Decision Tree 2 results, include = FALSE}
+cfm <- confusionMatrix(y_hat_rpart2, y)
+results <- bind_rows(results, tibble(method = "Decision tree with penalty", 
+                                     Specificity = cfm$byClass[["Specificity"]], 
+                                     Sensitivity = cfm$byClass[["Sensitivity"]], 
+                                     Accuracy = cfm$overall[["Accuracy"]]))
+
+```
+
+This time the prediction on the test is perfect. Let's check our decision tree on the full set :
+```{r Decision Tree full_set}
+y_hat <- predict(rpart2_train, newdata = mushrooms, type = "class")
+kable(table(mushrooms$class, y_hat), caption = "DTwP, full set", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "y_hat" = 2))
+```
+
+**Our decision tree predicts correctly any mushroom in our dataset.** Let's have a look at the tree :
+
+```{r Decision Tree 2 Draw, echo = FALSE}
+rpart.plot(rpart2_train, 
+           type = 5,# var names within nodes
+           tweak = 0.8, # reduce text size
+           under = TRUE, # puts extra data under the box
+           extra = 101, # show percentages and number of obs
+           box.palette = "GnBu", # color scheme
+           branch.lty = 3) # dotted branch lines
+```
+
+\  
+\  
+
+The decision tree can correctly classify all observations with only **5 attributes** : odor, spore.print.color, population, gill.size and habitat. Let see if logistic regression can achieve 100% accuracy with these 5 predictors.
+
+\  
+\  
+
+## Five predictors logistic regression
+
+```{r 5P glm, warning = FALSE}
+form <- as.formula("class ~ odor + spore.print.color + population + gill.size + habitat")
+glm5P_train <- glm(form, data = train_set, family = "binomial", maxit = 100)
+y_hat_glm5P <- predict(glm5P_train, newdata = test_set, type = "response")
+y_hat_glm5P <- as.factor(ifelse(y_hat_glm5P > 0.5, "poisonous", "edible"))
+kable(table(y, y_hat_glm5P), caption = "5-predictors logistic regression", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position") %>%
+  add_header_above(c(" " = 1, "y_hat" = 2))
+```
+
+The 5 predictors are indeed enough to achieve 100% accuracy.
+
+```{r 5P glm results, include = FALSE}
+cfm <- confusionMatrix(y_hat_glm5P, y)
+results <- bind_rows(results, tibble(method = "5-predictors logistic regression", 
+                                     Specificity = cfm$byClass[["Specificity"]], 
+                                     Sensitivity = cfm$byClass[["Sensitivity"]], 
+                                     Accuracy = cfm$overall[["Accuracy"]]))
+
+```
+
+\newpage
+
+# RESULTS
+\  
+\  
+
+```{r results, echo = FALSE}
+kable(results, booktabs = TRUE, digits = 3, align = c("l","c","c","c"))
+```
+\  
+\  
+\  
+\  
+
+---
+
+\  
+\  
+\  
+
+# CONCLUSION
+
+Five attributes are enough to decide if a mushroom in our dataset is edible or poisonous. If you go shrooming, the golden rule is to **use your nose first.** If the mushroom smells fishy, spicy, pungent, musty, foul or creosote, discard it ! If it doesn't, then look at the color of the spore print. If it's green or white, then you'd better throw it away as well. It's probably edible ($72\%$ of this population is) but to be sure you would have to establish its population, its habitat and its gill size. Better safe than sorry !
